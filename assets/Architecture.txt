@@ -1,0 +1,110 @@
+Power domains
+
+Always-on (VDD): ATtiny202 only. Uses RTC/PIT (or WDT) for wake every ~10 s, plus button as a wake source. All other blocks are off in Power-down.
+
+Switched (VDD_SW via TPS22860): FDC1004, DRV8210, LED, piezo. Enabled only during a measurement or while beeping.
+
+Sensing topology (aligns with your PCB)
+
+Electrodes: CIN1/2/3 = level pads, CIN4 = “always-wet” reference. The top-layer pads (page 2) and bottom-layer shields (page 3) show a symmetric stack ideal for out-of-phase (OoP) guarding. In firmware we measure (CINx – CIN4) for x∈{1,2,3}; shields driven per FDC1004 to suppress hand/steam interference.
+Operating states (tickless, event-driven)
+
+BOOT
+
+Lowspeed clock, minimal peripherals.
+
+Configure wake timer (e.g., 10 s) and button interrupt.
+
+De-assert PWR_EN (switched rail off). Persisted config/thresholds read once.
+
+SLEEP (Power-down)
+
+Wake on timer or button. Avg current ≪ 1 µA typical (MCU only).
+
+MEASURE (on wake)
+
+Assert PWR_EN, wait a short settle (2–5 ms).
+
+Bring up I²C, program FDC1004 for single-shot conversions in differential mode:
+
+MEAS1: CIN1–CIN4 (Low), MEAS2: CIN2–CIN4 (Very-Low), MEAS3: CIN3–CIN4 (Critical).
+
+Take 1 sample each in steady state; take 3–5 samples (avg/median) when a threshold transition is suspected.
+
+Convert raw to fF (apply per-channel offset/gain if characterized). Compute ΔC = CINx–CIN4, compare to thresholds with hysteresis and K-sample debounce to prevent chatter.
+
+ALERT SCHEDULER
+
+If a new level is entered, schedule a 5-minute alert window with the pattern:
+
+Low: periodic double-beep.
+
+Very-low: periodic triple-beep.
+
+Critical: continuous beeping (implemented as very high duty burst) for up to 5 min.
+
+Each pattern is rate-limited and stops after 5 min or if the level improves.
+
+If a worse level is reached during an active window, escalate immediately and restart that window.
+
+BEEP (burst)
+
+Keep VDD_SW on only for burst duration. Drive DRV8210 with a brief envelope:
+
+Attack/decay shaped PWM at the piezo’s resonance (or a nearby tone) for ~100–300 ms per beep.
+
+Inter-beep gaps in MCU idle (not sleep) or very short naps; after the pattern burst, fully power-gate again.
+
+TEARDOWN
+
+Power down I²C, de-assert PWR_EN, return to SLEEP. Next periodic wake continues monitoring even while the 5-minute alert timer is active (alerts only fire in scheduled slots).
+
+Timing & duty-cycle (order-of-magnitude)
+
+Every 10 s: ~2–5 ms rail settle + ~10–30 ms conversions (1–3 single-shots total) + a few ms compute → < 40 ms on, 9960 ms sleep → duty < 0.4%.
+
+Alert windows: short beep bursts (100–300 ms) at low repetition (e.g., once every 6–10 s for Low/Very-Low). Critical uses high-duty bursts but still envelope-shaped to cap energy. This meets the “5 min then stop” requirement while keeping average current low.
+
+Software modules (clean C++ in VS Code)
+
+board_pins.hpp: PWR_EN, I²C pins, LED, button, H-bridge pins, piezo PWM.
+
+power_manager.cpp: sleep entry/exit, rail control, clock scaling.
+
+scheduler.cpp: tickless timer, event queue; manages 10 s wakes and alert windows without busy-waits.
+
+fdc1004.cpp (driver): tiny register-level API; config MEAS1..3 differential, single-shot trigger, read MSB/LSB, scale to fF.
+
+level_logic.cpp: ΔC computation vs thresholds; hysteresis; K-sample debounce; state transitions (Normal→Low→Very-Low→Critical and back).
+
+buzzer.cpp: pattern composer (double/triple/continuous), envelope generator, H-bridge control, per-burst power gating.
+
+ui.cpp: button wake/ack (optional), LED blink (diagnostic only; default disabled to save power).
+
+persist.cpp: thresholds, calibration (offset/gain), beep tone & cadence, stored in NVM.
+
+Thresholding & calibration
+
+Install-time “wet” learn: On first power-up stuck to a full tank, sample each ΔC to set a reference. Store offsets.
+
+Production defaults: Ship with conservative thresholds (ΔC_low, ΔC_vlow, ΔC_crit) and per-channel hysteresis bands (e.g., 5–10% of step).
+
+Runtime sanity: If CIN4 (always-wet) drops below a minimum for multiple cycles, flag “installation/bonding issue” and suppress beeping (optional long blink once on next button wake).
+
+Fault handling
+
+I²C retry once on timeout; if FDC read fails twice, soft-reset the FDC (next cycle) and skip alert changes this tick.
+
+Brown-out/low battery: optional quick-check via ADC on VDD (if routed) to inhibit long alerts when voltage is low.
+
+Button override: short press silences current alert window; next level change can re-arm.
+
+Test plan (concise)
+
+Bench: Simulate levels by swapping pads into water/air; verify ΔC ordering and hysteresis.
+
+EMI/hand test: Move a hand near sensor—ensure ΔC remains stable (OoP + shields).
+
+Power: Log average current in sleep/measure/alert; confirm projected 1–2 year life.
+
+Thermal/aging: Soak tests to verify thresholds remain stable; adjust OFFSET/GAIN if drift observed.

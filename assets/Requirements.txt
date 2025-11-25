@@ -1,0 +1,26 @@
+
+Requirements:
+A ultra low powered water level sensor which runs off a standard 3 cell coin battery. The sensor is to stick on the outside of a plastic water tank in a coffee machine. The purpose is to detect and alert the user to when the water level is getting low. It will alert the user through a piezo buzzer.
+The device should last for at least 1 year on a coin cell battery. Two years would be even better.
+
+The device makes use of a capactive sensor which is connected to 4 sets of electrodes on the PCB. The first 3 sets are used for making 3 discrete level checks. Low water, Very Low, and critical. The 4th set is below these levels and is used as a reference electrode to show an “always wet” condition.
+A hbridge is used to increase the volume of the passive piezo element.
+There is a micro controller which runs the sensor measurements, PWM for the piezo, and for waking the system. This is to be brought in and our of sleep mode periodically say every 10 seconds to check the level. It also operates and load switch which lets it turn on the rest of the system on each wakeup.
+
+Hardware:
+* ATTINY202-SSN microcontoller – Only thing powered off VDD. Bring in and out of sleep mode to switch on the load switch in order to power the capactive sensor and piezo etc.
+* TPS22860DBVR: Load switch for powering down the rest of the circuit
+* FDC1004DGSR: Capactive sensor. CIN1-3 connected to discrete electrodes. CIN4 connected to reference always wet electrode. Drive out of phase technique to avoid external triggers like hands etc.
+* DRV8210DSGR: H bridge for running the piezo buzzer
+* CPT-9019A-SMT-TR: Piezo buzzer.
+* Program over UDPI using 1528-5879-ND
+* Also an LED and a button available.
+* 
+How I want it to work:
+When the water gets down to the first level you get some periodic double beep for say 5 minutes total before stopping. Then when it gets down to the second level you get a periodic triple beep for 5 minutes until turning off. And then finally for the critical level you get continuous beeping for 5 minutes before turning off. Or something similar depending on battery usage.
+
+Figure 1 - Top layer electrode pads
+
+
+
+Figure 2 - Bottom layer electrode shields
