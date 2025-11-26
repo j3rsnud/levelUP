@@ -8,6 +8,9 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
+// Forward declaration for power module wake source notification
+extern void RTC_PIT_vect_impl();
+
 // Tick counter (increments every 10 seconds)
 static volatile uint32_t tick_counter = 0;
 
