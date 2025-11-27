@@ -68,18 +68,12 @@ uint32_t rtc_get_ticks() {
 
 // PIT interrupt service routine
 ISR(RTC_PIT_vect) {
-    static uint8_t second_counter = 0;
-
     // Clear interrupt flag
     RTC.PITINTFLAGS = RTC_PI_bm;
 
-    // Count to 10 seconds
-    second_counter++;
-    if (second_counter >= 10) {
-        second_counter = 0;
-        tick_counter++;
+    // Wake every 1 second
+    tick_counter++;
 
-        // Notify power module of wake source
-        RTC_PIT_vect_impl();
-    }
+    // Notify power module of wake source
+    RTC_PIT_vect_impl();
 }

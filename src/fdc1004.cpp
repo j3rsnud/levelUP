@@ -108,26 +108,26 @@ bool fdc_trigger_measurement(FdcChannel ch) {
         case FdcChannel::C1:
             meas_reg = FdcReg::CONF_MEAS1;
             cin_pos = 0;  // CIN1
-            cin_neg = 3;  // CIN4
+            cin_neg = 7;  // Disabled (single-ended)
             meas_enable = FdcConf::MEAS1_EN;
             break;
         case FdcChannel::C2:
             meas_reg = FdcReg::CONF_MEAS2;
             cin_pos = 1;  // CIN2
-            cin_neg = 3;  // CIN4
+            cin_neg = 7;  // Disabled (single-ended)
             meas_enable = FdcConf::MEAS2_EN;
             break;
         case FdcChannel::C3:
             meas_reg = FdcReg::CONF_MEAS3;
             cin_pos = 2;  // CIN3
-            cin_neg = 3;  // CIN4
+            cin_neg = 7;  // Disabled (single-ended)
             meas_enable = FdcConf::MEAS3_EN;
             break;
         default:
             return false;
     }
 
-    // Configure measurement: CINx - CIN4, CAPDAC disabled
+    // Configure measurement: CINx single-ended (CHB disabled), CAPDAC disabled
     uint16_t meas_conf = (cin_pos << FdcConf::CHA_OFFSET) |
                          (cin_neg << FdcConf::CHB_OFFSET);
     if (!write_reg16(meas_reg, meas_conf)) {
