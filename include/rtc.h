@@ -26,3 +26,10 @@ void rtc_init();
  * @return Number of 10-second ticks elapsed
  */
 uint32_t rtc_get_ticks();
+
+/**
+ * @brief Check if 8 seconds have elapsed and it's time to wake
+ *
+ * @return true if main loop should run, false if should sleep immediately
+ */
+bool rtc_should_wake();

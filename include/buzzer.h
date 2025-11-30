@@ -15,6 +15,7 @@
  */
 enum class BeepPattern : uint8_t {
     NONE = 0,
+    SINGLE = 1,   // Calibration entry
     DOUBLE = 2,   // Low level
     TRIPLE = 3,   // Very-Low level
     FIVE = 5,     // Critical level

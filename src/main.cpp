@@ -2,15 +2,12 @@
  * @file main.cpp
  * @brief Main state machine for water level sensor
  *
- * State flow:
- * BOOT → SLEEP → (wake) → MEASURE → ALERT_CHECK → TEARDOWN → SLEEP → ...
- *
- * Every 10 seconds:
+ * Simplified flow (every 8 seconds):
  * 1. Wake from sleep
- * 2. Enable VDD_SW (power on FDC1004 + DRV8210)
+ * 2. Enable VDD_SW (power on FDC1004)
  * 3. Measure water level
- * 4. Update alert state
- * 5. If alert active, play beep pattern
+ * 4. If level low and counter < 38: beep + increment
+ * 5. If level normal: reset counter
  * 6. Disable VDD_SW
  * 7. Return to sleep
  */
@@ -25,19 +22,13 @@
 #include "twi.h"
 #include "fdc1004.h"
 #include "level_logic.h"
-#include "alert_manager.h"
 #include "buzzer.h"
 #include "button.h"
 #include "eeprom_config.h"
 
-// LED helper functions
-static void led_on() {
-    PORTA.OUTSET = pins::LED;
-}
-
-static void led_off() {
-    PORTA.OUTCLR = pins::LED;
-}
+// Simple alert tracking
+static uint8_t beep_counter = 0;
+constexpr uint8_t MAX_BEEPS = 38;  // 38 beeps * 8s = 304s ≈ 5 min
 
 // Runtime delay function (not compile-time constant)
 static void delay_ms(uint16_t ms) {
@@ -47,23 +38,12 @@ static void delay_ms(uint16_t ms) {
     }
 }
 
-static void led_blink(uint8_t count, uint16_t on_ms, uint16_t off_ms) {
-    for (uint8_t i = 0; i < count; i++) {
-        led_on();
-        delay_ms(on_ms);
-        led_off();
-        if (i < count - 1) {
-            delay_ms(off_ms);
-        }
-    }
-}
-
 /**
  * Calibration mode: Learn baseline with tank full
- * Takes 8 samples per channel and averages (reduced from 16 for flash savings)
+ * Takes 6 samples per channel and averages (reduced for flash savings)
  */
 static bool perform_calibration() {
-    constexpr uint8_t NUM_SAMPLES = 8;
+    constexpr uint8_t NUM_SAMPLES = 6;
     int32_t sum_c1 = 0, sum_c2 = 0, sum_c3 = 0;
     uint8_t valid_samples = 0;
 
@@ -171,9 +151,6 @@ static void system_init() {
 
     level_init(thresholds, calibration);
 
-    // Initialize alert manager
-    alert_init();
-
     // Initialize buzzer
     buzzer_init();
 
@@ -199,16 +176,7 @@ static void measurement_cycle() {
     }
 
     // Perform level measurement
-    WaterLevel old_level = level_get_current();
-    WaterLevel new_level = level_update();
-
-    // Check if level changed
-    if (new_level != old_level && new_level != WaterLevel::ERROR) {
-        alert_on_level_change(new_level);
-    }
-
-    // Disable TWI and power down peripherals (unless alert is about to beep)
-    // We'll check alert status after this
+    level_update();
 }
 
 /**
@@ -218,57 +186,98 @@ int main(void) {
     // Initialize system
     system_init();
 
-    // Main loop
+    // Main loop (PIT wakes every 1 second, measure every 8 seconds)
     while (1) {
-        // Get current tick count
-        uint32_t current_tick = rtc_get_ticks();
-
-        // Perform measurement cycle
-        measurement_cycle();
-
-        // Update alert manager
-        bool alert_active = alert_update(current_tick);
-
-        // If alert is active, keep VDD_SW on and update buzzer
-        if (alert_active) {
-            // Keep buzzer updated (1ms granularity for timing)
-            uint16_t timeout = 0;
-            while (buzzer_is_active() && timeout < 2000) {  // Max 2 second beep sequence
-                buzzer_update();
-                delay_ms(1);
-                timeout++;
-
-                // Check button during beep
-                if (button_is_pressed()) {
-                    alert_silence();
-                    buzzer_stop();
-                    break;
-                }
+        // Check button FIRST on every wake (for responsiveness)
+        if (button_is_pressed()) {
+            // Button detected - poll every 100ms to measure duration
+            uint8_t duration = 0;
+            while (button_is_pressed() && duration < 50) {  // Max 5 seconds
+                delay_ms(100);
+                duration++;
             }
+
+            // Check if it was a long press (≥3 seconds = 30 deciseconds)
+            if (duration >= 30) {
+                // Indicate calibration mode entry with single beep
+                power_enable_peripherals();
+                buzzer_start(BeepPattern::SINGLE);
+                while (buzzer_is_active()) {
+                    buzzer_update();
+                    delay_ms(1);
+                }
+                delay_ms(200);  // Brief pause
+
+                // Enter calibration mode
+                twi_init();
+                fdc_init();
+                perform_calibration();
+                power_disable_peripherals();
+            }
+
+            // Wait for button release
+            while (button_is_pressed()) {
+                delay_ms(10);
+            }
+
+            // Go back to sleep after button handling
+            power_sleep();
+            continue;
+        }
+
+        // Check if 8 seconds have elapsed for measurement
+        if (!rtc_should_wake()) {
+            // Not time yet - go back to sleep immediately
+            power_sleep();
+            continue;
+        }
+
+        // 8 seconds elapsed - do measurement and alert logic
+        // Single LED blink on wake - easy to time
+        PORTA.OUTSET = pins::LED;
+        delay_ms(100);
+        PORTA.OUTCLR = pins::LED;
+
+        // TEST: Skip measurement to test timing
+        // Enable peripherals for buzzer (normally done in measurement_cycle)
+        power_enable_peripherals();
+
+        // measurement_cycle();
+
+        // Force critical level for testing
+        WaterLevel level = WaterLevel::CRITICAL;  // Force beep for testing
+        // WaterLevel level = level_get_current();
+
+        // Simple alert logic
+        if (level != WaterLevel::NORMAL && level != WaterLevel::ERROR) {
+            // Level is low - beep if under limit
+            if (beep_counter < MAX_BEEPS) {
+                // Choose pattern based on level
+                BeepPattern pattern = BeepPattern::NONE;
+                if (level == WaterLevel::LOW) pattern = BeepPattern::DOUBLE;
+                else if (level == WaterLevel::VERY_LOW) pattern = BeepPattern::TRIPLE;
+                else if (level == WaterLevel::CRITICAL) pattern = BeepPattern::FIVE;
+
+                // Play beep pattern
+                buzzer_start(pattern);
+                while (buzzer_is_active()) {
+                    buzzer_update();
+                    delay_ms(1);
+                }
+
+                beep_counter++;
+            }
+            // else: silent, 5-min window expired
+        } else {
+            // Level normal - reset counter
+            beep_counter = 0;
         }
 
         // Power down peripherals
         power_disable_peripherals();
 
-        // Check button for calibration request
-        ButtonEvent btn_event = button_check();
-        if (btn_event == ButtonEvent::LONG_PRESS) {
-            // Enter calibration mode
-            power_enable_peripherals();
-            twi_init();
-            fdc_init();
-            perform_calibration();
-            power_disable_peripherals();
-        } else if (btn_event == ButtonEvent::SHORT_PRESS) {
-            // Silence alert
-            alert_silence();
-        }
-
         // Enter sleep mode
         power_sleep();
-
-        // Wake up here (RTC or button)
-        // Loop continues...
     }
 
     return 0;
