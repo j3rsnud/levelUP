@@ -33,24 +33,24 @@ void buzzer_init()
     PORTA.OUTCLR = pins::DRV_IN1; // Initially LOW
 
     // Configure TCA0 for PWM generation
-    // Target frequency: 3800 Hz (resonant frequency)
+    // Target frequency: 4000 Hz (optimal resonant frequency found by testing)
     // Clock source: CLK_PER (10 MHz)
     // Prescaler: DIV16 → 625 kHz timer clock
-    // Period for 3800 Hz: 625 kHz / 3800 Hz ≈ 164
+    // Period for 4000 Hz: 625 kHz / 4000 Hz = 156.25
 
     TCA0.SINGLE.CTRLA = 0; // Stop timer
 
     // Single-slope PWM mode
     TCA0.SINGLE.CTRLB = TCA_SINGLE_WGMODE_SINGLESLOPE_gc;
 
-    // Set period for 3800 Hz
+    // Set period for 4000 Hz
     // With prescaler DIV16: f = F_CPU / (16 * (PER + 1))
     // PER = F_CPU / (16 * f) - 1
-    // PER = 10000000 / (16 * 3800) - 1 ≈ 164
-    TCA0.SINGLE.PER = 164;
+    // PER = 10000000 / (16 * 4000) - 1 = 156
+    TCA0.SINGLE.PER = 156;
 
-    // Set 50% duty cycle for louder beep
-    TCA0.SINGLE.CMP0 = 82; // 50% of 164
+    // Set 48% duty cycle (optimal volume found by testing)
+    TCA0.SINGLE.CMP0 = 75; // 48% of 156
 
     // Prescaler DIV16, but don't enable yet
     TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV16_gc;
