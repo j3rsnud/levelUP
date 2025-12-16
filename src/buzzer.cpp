@@ -23,8 +23,8 @@ struct BuzzerState
 static BuzzerState state = {BeepPattern::NONE, 0, 0, 0};
 
 // Timing constants (in milliseconds, tracked by buzzer_update() calls)
-constexpr uint16_t BEEP_DURATION_MS = 25;
-constexpr uint16_t BEEP_GAP_MS = 25; // Reduced for faster beep patterns
+constexpr uint16_t BEEP_DURATION_MS = 150;  // Longer beeps for clarity
+constexpr uint16_t BEEP_GAP_MS = 150;       // Longer gaps to distinguish patterns
 
 void buzzer_init()
 {
@@ -49,8 +49,8 @@ void buzzer_init()
     // PER = 10000000 / (16 * 3800) - 1 ≈ 164
     TCA0.SINGLE.PER = 164;
 
-    // Set 30% duty cycle for quieter beep
-    TCA0.SINGLE.CMP0 = 49; // 30% of 164
+    // Set 50% duty cycle for louder beep
+    TCA0.SINGLE.CMP0 = 82; // 50% of 164
 
     // Prescaler DIV16, but don't enable yet
     TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV16_gc;
