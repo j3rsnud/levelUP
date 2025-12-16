@@ -11,14 +11,23 @@
  */
 
 #include <avr/io.h>
+#include <avr/interrupt.h>
 #include <util/delay.h>
+#include "config.h"
 #include "pins.hpp"
 #include "power.h"
+#include "rtc.h"
 #include "button.h"
 #include "buzzer.h"
 #include "twi.h"
 #include "fdc1004.h"
 #include "log_updi_tx.h"
+
+// RTC interrupt implementation (required by rtc.cpp)
+void RTC_PIT_vect_impl() {
+    // PIT wakes every 1 second, counts to 8, then wakes main loop
+    // Nothing else needed here
+}
 
 // Simple timestamp counter (seconds since boot)
 static uint16_t timestamp_sec = 0;
@@ -30,9 +39,6 @@ static int16_t base2 = 0;
 static int16_t base3 = 0;
 static int16_t base4 = 0;
 static bool baseline_set = false;
-
-// Threshold for level detection (drift-corrected value)
-#define THRESHOLD 100
 
 // Level state tracking (for detecting transitions)
 static bool level1_triggered = false;  // C1 (LOW)
@@ -62,6 +68,9 @@ static void system_init() {
     // Initialize buzzer PWM
     buzzer_init();
 
+    // Initialize RTC for sleep/wake timing
+    rtc_init();
+
     // Initialize UART logging FIRST (so we can see errors)
     log_init();
 
@@ -86,7 +95,6 @@ static void play_beep(BeepPattern pattern) {
  * Takes multiple samples and averages them
  */
 static bool calibrate_baseline() {
-    constexpr uint8_t NUM_SAMPLES = 10;
     int32_t sum_c1 = 0, sum_c2 = 0, sum_c3 = 0, sum_c4 = 0;
     uint8_t valid_samples = 0;
 
@@ -94,7 +102,7 @@ static bool calibrate_baseline() {
 
     // Enable VDD_SW to power FDC1004 sensor
     power_enable_peripherals();
-    delay_ms(10);  // Power stabilization
+    delay_ms(POWER_STABILIZATION_MS);
 
     // Initialize I2C
     twi_init();
@@ -107,7 +115,7 @@ static bool calibrate_baseline() {
     }
 
     // Take multiple samples
-    for (uint8_t i = 0; i < NUM_SAMPLES; i++) {
+    for (uint8_t i = 0; i < CALIBRATION_SAMPLES; i++) {
         FdcReading r1 = fdc_measure(FdcChannel::C1, 20);
         FdcReading r2 = fdc_measure(FdcChannel::C2, 20);
         FdcReading r3 = fdc_measure(FdcChannel::C3, 20);
@@ -121,11 +129,11 @@ static bool calibrate_baseline() {
             valid_samples++;
         }
 
-        delay_ms(100);  // Small delay between samples
+        delay_ms(CALIBRATION_SAMPLE_DELAY_MS);
     }
 
     // Check if we got enough valid samples
-    if (valid_samples < NUM_SAMPLES / 2) {
+    if (valid_samples < CALIBRATION_SAMPLES / 2) {
         log_debug("ERROR: Not enough valid samples");
         power_disable_peripherals();
         return false;
@@ -185,29 +193,41 @@ static void measure_and_log() {
     log_drift_corrected(dc1, dc2, dc3);
 
     // Check for level transitions and beep
-    // Level 1 (LOW): dc1 > 100
-    if (!level1_triggered && dc1 > THRESHOLD) {
+    // Level 1 (LOW): dc1 > THRESHOLD_LOW
+    if (!level1_triggered && dc1 > THRESHOLD_LOW) {
         level1_triggered = true;
         log_debug("LOW level detected");
         play_beep(BeepPattern::SINGLE);  // 1 beep
     }
 
-    // Level 2 (VERY_LOW): dc2 > 100
-    if (!level2_triggered && dc2 > THRESHOLD) {
+    // Level 2 (VERY_LOW): dc2 > THRESHOLD_VLOW
+    if (!level2_triggered && dc2 > THRESHOLD_VLOW) {
         level2_triggered = true;
         log_debug("VERY_LOW level detected");
         play_beep(BeepPattern::DOUBLE);  // 2 beeps
     }
 
-    // Level 3 (CRITICAL): dc3 > 100
-    if (!level3_triggered && dc3 > THRESHOLD) {
+    // Level 3 (CRITICAL): dc3 > THRESHOLD_CRIT
+    if (!level3_triggered && dc3 > THRESHOLD_CRIT) {
         level3_triggered = true;
         log_debug("CRITICAL level detected");
         play_beep(BeepPattern::TRIPLE);  // 3 beeps
     }
 
-    // Increment timestamp (in 1-second intervals)
-    timestamp_sec += 1;
+    // Check for refill: all dc values drop below threshold with hysteresis
+    if ((level1_triggered || level2_triggered || level3_triggered) &&
+        dc1 < (THRESHOLD_LOW - REFILL_HYSTERESIS) &&
+        dc2 < (THRESHOLD_VLOW - REFILL_HYSTERESIS) &&
+        dc3 < (THRESHOLD_CRIT - REFILL_HYSTERESIS)) {
+        level1_triggered = false;
+        level2_triggered = false;
+        level3_triggered = false;
+        log_debug("Tank refilled - reset");
+        play_beep(BeepPattern::DOUBLE);
+    }
+
+    // Increment timestamp by measurement interval
+    timestamp_sec += MEASURE_INTERVAL_SEC;
 }
 
 int main() {
@@ -224,9 +244,9 @@ int main() {
     play_beep(BeepPattern::SINGLE);
     log_debug("Button pressed - fill tank");
 
-    // Wait 10 seconds for user to ensure tank is full/wet
+    // Wait for user to ensure tank is full/wet
     log_debug("Waiting 10 seconds...");
-    for (uint8_t i = 0; i < 10; i++) {
+    for (uint8_t i = 0; i < CALIBRATION_WAIT_SEC; i++) {
         delay_ms(1000);
     }
 
@@ -245,13 +265,49 @@ int main() {
     play_beep(BeepPattern::DOUBLE);
     log_debug("Starting measurements");
 
-    // Main loop - measure every 1 second (fast logging for testing)
-    while (1) {
-        // Measure and log
-        measure_and_log();
+    // Enable interrupts for RTC
+    sei();
 
-        // Wait 1 second
-        delay_ms(1000);
+    // Main loop - measure every 8 seconds with sleep between
+    while (1) {
+        // Check for recalibration request (button press during operation)
+        if (button_is_pressed()) {
+            log_debug("Recalibration requested");
+            play_beep(BeepPattern::SINGLE);
+
+            // Wait for button release
+            while (button_is_pressed()) {
+                delay_ms(100);
+            }
+
+            // Wait for user to ensure tank is full/wet
+            log_debug("Fill tank - waiting 10 sec");
+            for (uint8_t i = 0; i < CALIBRATION_WAIT_SEC; i++) {
+                delay_ms(1000);
+            }
+
+            // Perform recalibration
+            if (calibrate_baseline()) {
+                // Reset level flags on successful recalibration
+                level1_triggered = false;
+                level2_triggered = false;
+                level3_triggered = false;
+                play_beep(BeepPattern::DOUBLE);
+                log_debug("Recalibration complete");
+            } else {
+                play_beep(BeepPattern::FIVE);
+                log_debug("Recalibration failed");
+            }
+        }
+
+        // Check if it's time to wake (8 seconds elapsed)
+        if (rtc_should_wake()) {
+            // Measure and log
+            measure_and_log();
+        }
+
+        // Go to sleep until next RTC wake (PIT wakes every 1s)
+        power_sleep();
     }
 
     return 0;
