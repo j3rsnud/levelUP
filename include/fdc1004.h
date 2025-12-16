@@ -17,12 +17,13 @@
 constexpr uint8_t FDC1004_ADDR = 0x50;
 
 /**
- * FDC1004 measurement channels
+ * FDC1004 measurement channels (single-ended mode)
  */
 enum class FdcChannel : uint8_t {
-    C1 = 0,  // CIN1 - CIN4
-    C2 = 1,  // CIN2 - CIN4
-    C3 = 2,  // CIN3 - CIN4
+    C1 = 0,  // CIN1 single-ended
+    C2 = 1,  // CIN2 single-ended
+    C3 = 2,  // CIN3 single-ended
+    C4 = 3,  // CIN4 single-ended (always-wet reference)
 };
 
 /**

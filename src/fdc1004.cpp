@@ -123,6 +123,12 @@ bool fdc_trigger_measurement(FdcChannel ch) {
             cin_neg = 7;  // Disabled (single-ended)
             meas_enable = FdcConf::MEAS3_EN;
             break;
+        case FdcChannel::C4:
+            meas_reg = FdcReg::CONF_MEAS4;
+            cin_pos = 3;  // CIN4 (reference)
+            cin_neg = 7;  // Disabled (single-ended)
+            meas_enable = FdcConf::MEAS4_EN;
+            break;
         default:
             return false;
     }
@@ -182,6 +188,10 @@ FdcReading fdc_read_result(FdcChannel ch) {
         case FdcChannel::C3:
             msb_reg = FdcReg::MEAS3_MSB;
             lsb_reg = FdcReg::MEAS3_LSB;
+            break;
+        case FdcChannel::C4:
+            msb_reg = FdcReg::MEAS4_MSB;
+            lsb_reg = FdcReg::MEAS4_LSB;
             break;
         default:
             return result;

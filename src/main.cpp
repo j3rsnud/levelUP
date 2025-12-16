@@ -21,10 +21,12 @@
 // Simple timestamp counter (seconds since boot)
 static uint16_t timestamp_sec = 0;
 
-// Baseline values for drift correction (learned on first reading)
-static int16_t baseline_c1 = 0;
-static int16_t baseline_c2 = 0;
-static int16_t baseline_c3 = 0;
+// Baseline values for drift correction (learned on first reading with tank full/wet)
+// Calibration: base1, base2, base3, base4 (all 4 channels in wet/normal state)
+static int16_t base1 = 0;
+static int16_t base2 = 0;
+static int16_t base3 = 0;
+static int16_t base4 = 0;
 static bool baseline_set = false;
 
 /**
@@ -74,42 +76,57 @@ static void system_init() {
 
 /**
  * Read all FDC1004 channels and log results
+ *
+ * Methodology:
+ * 1. Read raw r1, r2, r3, r4 (all 4 channels single-ended)
+ * 2. Calculate deltas: d = base - measured (so water drop = positive)
+ * 3. Drift correct: dc = d - d4 (remove common-mode drift using always-wet reference)
+ * 4. Log raw (r1,r2,r3,r4) and drift-corrected (dc1,dc2,dc3)
  */
 static void measure_and_log() {
-    // Read all channels
+    // Read all 4 channels (including C4 reference)
     FdcReading r1 = fdc_measure(FdcChannel::C1, 20);
     FdcReading r2 = fdc_measure(FdcChannel::C2, 20);
     FdcReading r3 = fdc_measure(FdcChannel::C3, 20);
+    FdcReading r4 = fdc_measure(FdcChannel::C4, 20);
 
     // Check if readings are valid
-    if (!r1.valid || !r2.valid || !r3.valid) {
+    if (!r1.valid || !r2.valid || !r3.valid || !r4.valid) {
         log_debug("ERROR: Invalid readings");
         return;
     }
 
-    // Set baseline on first valid reading
+    // Set baseline on first valid reading (with tank full/wet)
     if (!baseline_set) {
-        baseline_c1 = r1.capacitance_ff;
-        baseline_c2 = r2.capacitance_ff;
-        baseline_c3 = r3.capacitance_ff;
+        base1 = r1.capacitance_ff;
+        base2 = r2.capacitance_ff;
+        base3 = r3.capacitance_ff;
+        base4 = r4.capacitance_ff;
         baseline_set = true;
-        log_debug("Baseline set");
+        log_debug("Baseline set (wet)");
     }
 
-    // Log raw sensor data
-    // Note: c4 set to 0 since we're using single-ended mode
-    log_sensor_data(r1.capacitance_ff, r2.capacitance_ff, r3.capacitance_ff, 0, timestamp_sec);
+    // Calculate deltas from baseline: d = base - measured
+    // (Water dropping past electrode makes d positive)
+    int16_t d1 = base1 - r1.capacitance_ff;
+    int16_t d2 = base2 - r2.capacitance_ff;
+    int16_t d3 = base3 - r3.capacitance_ff;
+    int16_t d4 = base4 - r4.capacitance_ff;
 
-    // Calculate drift-corrected deltas
-    int16_t dc1 = r1.capacitance_ff - baseline_c1;
-    int16_t dc2 = r2.capacitance_ff - baseline_c2;
-    int16_t dc3 = r3.capacitance_ff - baseline_c3;
+    // Drift correction using always-wet reference (C4)
+    // dc = d - d4 removes common-mode environmental drift
+    int16_t dc1 = d1 - d4;
+    int16_t dc2 = d2 - d4;
+    int16_t dc3 = d3 - d4;
 
-    // Log drift-corrected values
+    // Log raw sensor data (all 4 channels)
+    log_sensor_data(r1.capacitance_ff, r2.capacitance_ff, r3.capacitance_ff, r4.capacitance_ff, timestamp_sec);
+
+    // Log drift-corrected values (for threshold tuning)
     log_drift_corrected(dc1, dc2, dc3);
 
-    // Increment timestamp
-    timestamp_sec++;
+    // Increment timestamp (in 8-second intervals)
+    timestamp_sec += 8;
 }
 
 int main() {
