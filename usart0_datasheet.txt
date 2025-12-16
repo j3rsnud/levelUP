@@ -1,0 +1,791 @@
+Universal Synchronous and Asynchronous Receiver and Transmitter
+(USART)
+23.1 Features
+• Full-Duplex or One-Wire Half-Duplex Operation
+• Asynchronous or Synchronous Operation:
+– Synchronous clock rates up to 1/2 of the device clock frequency
+– Asynchronous clock rates up to 1/8 of the device clock frequency
+• Supports Serial Frames with:
+– 5, 6, 7, 8, or 9 data bits
+– Optionally even and odd parity bits
+– 1 or 2 Stop bits
+• Fractional Baud Rate Generator:
+– Can generate desired baud rate from any system clock frequency
+– No need for external oscillator with certain frequencies
+• Built-In Error Detection and Correction Schemes:
+– Odd or even parity generation and parity check
+– Data overrun and framing error detection
+– Noise filtering includes false Start bit detection and digital low-pass filter
+• Separate Interrupts for:
+– Transmit complete
+– Transmit Data register empty
+– Receive complete
+• Multiprocessor Communication mode:
+– Addressing scheme to address specific devices on a multi-device bus
+– Enable unaddressed devices to automatically ignore all frames
+• Start Frame Detection in UART mode
+• Master SPI mode:
+– Double buffered operation
+– Configurable data order
+– Operation up to 1/2 of the peripheral clock frequency
+• IRCOM Module for IrDA Compliant Pulse Modulation/Demodulation
+• LIN Slave Support:
+– Auto-baud and Break character detection
+• RS-485 Support
+23.2 Overview
+The Universal Synchronous and Asynchronous serial Receiver and Transmitter (USART) peripheral is a
+fast and flexible serial communication module. The USART supports full duplex communication,
+asynchronous and synchronous operation and one-wire configurations. The USART can be set in SPI
+Master mode and used for SPI communication.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 282
+The USART uses three communication lines for data transfer:
+• RxD for receiving
+• TxD for transmitting
+• XCK for the transmission clock in synchronous operation
+Communication is frame based, and the frame format can be customized to support a wide range of
+standards. One frame can be directly followed by a new frame, or the communication line can return to
+the idle (high) state. A serial frame consists of:
+• 1 Start bit
+• 5, 6, 7, 8, or 9 data bits (MSB or LSB first)
+• Parity bit: Even, odd, or none
+• 1 or 2 Stop bits
+The USART is buffered in both directions, enabling continued data transmission without any delay
+between frames. Separate interrupts for receive and transmit completion allow fully interrupt driven
+communication. Frame error and buffer overflow are detected in hardware and indicated with separate
+status flags. Even or odd parity generation and parity check can also be enabled.
+The main functional blocks are the clock generator, the transmitter, and the receiver:
+• The clock generator includes a fractional Baud Rate Generator that is able to generate a wide
+range of USART baud rates from any system clock frequencies. This removes the need to use an
+oscillator with a specific frequency to achieve a required baud rate. It also supports external clock
+input in synchronous slave operation.
+• The transmitter consists of a single write buffer (DATA), a shift register and a parity generator. The
+write buffer allows continuous data transmission without any delay between frames.
+• The receiver consists of a two-level receive buffer (DATA) and a Shift register. Data and clock
+recovery units ensure robust synchronization and noise filtering during asynchronous data
+reception. It includes frame error, buffer overflow, and parity error detection.
+When the USART is set in one-wire mode, the transmitter and the receiver share the same RxD I/O pin.
+When the USART is set in master SPI mode, all USART-specific logic is disabled, leaving the transmit
+and receive buffers, Shift registers, and Baud Rate Generator enabled. Pin control and interrupt
+generation are identical in both modes. The registers are used in both modes, but their functionality
+differs for some control settings.
+An IRCOM module can be enabled for one USART to support IrDA 1.4 physical compliant pulse
+modulation and demodulation for baud rates up to 115.2 kbps.
+The USART can be linked to the Configurable Custom Logic unit (CCL). When used with the CCL, the
+TxD/RxD data can be encoded/decoded before the signal is fed into the USART receiver or after the
+signal is output from the transmitter when the USART is connected to CCL LUT outputs.
+This device provides one instance of the USART peripheral, USART0.
+
+Signal Description
+Signal Type Description
+RxD Input/output Receiving line
+TxD Output Transmitting line
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 283
+Signal Type Description
+XCK Input/output Clock for synchronous operation
+XDIR Output Transmit Enable for RS485
+
+System Dependencies
+In order to use this peripheral, other parts of the system must be configured correctly, as described below.
+Table 23-1. USART System Dependencies
+Dependency Applicable Peripheral
+Clocks Yes CLKCTRL
+I/O Lines and Connections Yes PORT
+Interrupts Yes CPUINT
+Events Yes EVSYS
+Debug Yes UPDI
+
+Functional Description
+23.3.1 Initialization
+For setting the USART in Full-Duplex mode, the following initialization sequence is recommended:
+1. Set the TxD pin value high, and optionally set the XCK pin low (OUT[n] in PORTx.OUT).
+2. Set the TxD and optionally the XCK pin as an output (DIR[n] in PORTx.DIR).
+3. Set the baud rate (in the USARTn.BAUD register) and frame format.
+4. Set the mode of operation (enables XCK pin output in Synchronous mode).
+5. Enable the transmitter or the receiver, depending on the usage.
+For interrupt-driven USART operation, global interrupts should be disabled during the initialization.
+Before doing a re-initialization with a changed baud rate or frame format, be sure that there are no
+ongoing transmissions while the registers are changed.
+For setting the USART in One-Wire mode, the following initialization sequence is recommended:
+1. Set the TxD/RxD pin value high, and optionally set the XCK pin low.
+2. Optionally, write the ODME bit in the USARTn.CTRLB register to '1' for Wired-AND functionality.
+3. Set the TxD/RxD and optionally the XCK pin as an output.
+4. Select the baud rate and frame format.
+5. Select the mode of operation (enables XCK pin output in Synchronous mode).
+6. Enable the transmitter or the receiver, depending on the usage.
+For interrupt-driven USART operation, global interrupts should be disabled during the initialization.
+Before doing a re-initialization with a changed baud rate or frame format, be sure that there are no
+ongoing transmissions while the registers are changed.
+23.3.2 Operation
+23.3.2.1 Clock Generation
+The clock used for baud rate generation and for shifting and sampling data bits is generated internally by
+the fractional Baud Rate Generator or externally from the transfer clock (XCK) pin. Five modes of clock
+generation are supported; Normal and Double-Speed Asynchronous mode, Master and Slave
+Synchronous mode, and Master SPI mode.
+
+Figure 23-2. Clock Generation Logic Block Diagram
+BAUD
+BAUD Rate
+Generator
+Sync
+Register
+XCK
+Pin
+DDR_XCK
+PORT_INV
+Edge
+Detector
+0
+1
+0
+1
+/2/4/2
+xcki
+xcko
+DDR_XCK
+CMODE[0]
+txclk
+rxclk
+fBAUD
+CLK_PER
+0
+1
+1
+0
+RXMODE
+Internal Clock Generation - The Fractional Baud Rate Generator
+The Baud Rate Generator is used for internal clock generation for Asynchronous modes, Aynchronous
+Master mode, and Master SPI mode operation. The output frequency generated (fBAUD) is determined by
+the baud register value (USARTn.BAUD) and the peripheral clock frequency (fCLK_PER). The following
+table contains equations for calculating the baud rate (in bits per second) and for calculating the
+USARTn.BAUD value for each mode of operation. It also shows the maximum baud rate versus
+peripheral clock frequency. For asynchronous operation, the USARTn.BAUD register value is 16 bits. The
+10 MSBs (BAUD[15:6]) hold the integer part, while the 6 LSBs (BAUD[5:0]) hold the fractional part. In
+Synchronous mode, only the integer part of the BAUD register determine the baud rate.
+
+Table 23-2. Equations for Calculating Baud Rate Register Setting
+Operating Mode Conditions Baud Rate (Bits Per Seconds) USART.BAUD Register Value
+Calculation
+Asynchronous fBAUD ≤ fCLK_PER
+S fBAUD = 64 × fCLK_PER
+S × BAUD BAUD = 64 × fCLK_PER
+S × fBAUD
+Synchronous fBAUD ≤ fCLK_PER
+2 fBAUD = fCLK_PER
+2 × BAUD 15: 6 BAUD 15: 6 = fCLK_PER
+2 × fBAUD
+
+S is the number of samples per bit. In Asynchronous operating mode (CMODE[0]=0), it could be set as
+16 (NORMAL mode) or 8 (CLK2X mode) by RXMODE in USARTn.CTRLB. For Synchronous operating
+mode (CMODE[0]=1), S equals 2.
+External Clock
+External clock (XCK) is used in Synchronous Slave mode operation. The XCK clock input is sampled on
+the peripheral clock frequency and the maximum XCK clock frequency (fXCK) is limited by the following:
+fXCK< fCLK_PER
+4
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 287
+For each high and low period, the XCK clock cycles must be sampled twice by the peripheral clock. If the
+XCK clock has jitter, or if the high/low period duty cycle is not 50/50, the maximum XCK clock speed must
+be reduced accordingly.
+Double Speed Operation
+Double speed operation allows for higher baud rates under asynchronous operation with lower peripheral
+clock frequencies. This operation mode is enabled by writing the RXMODE bit in the Control B register
+(USARTn.CTRLB) to CLK2X.
+When enabled, the baud rate for a given asynchronous baud rate setting shown in Table 23-2 will be
+doubled. In this mode, the receiver will use half the number of samples (reduced from 16 to 8) for data
+sampling and clock recovery. This requires a more accurate baud rate setting and peripheral clock. See
+Asynchronous Data Reception for more details.
+Synchronous Clock Operation
+When Synchronous mode is used, the XCK pin controls whether the transmission clock is input (Slave
+mode) or output (Saster mode). The corresponding port pin must be set to output for Master mode or to
+input for Slave mode (PORTx.DIR[n]). The normal port operation of the XCK pin will be overridden. The
+dependency between the clock edges and data sampling or data change is the same. Data input (on
+RxD) is sampled at the XCK clock edge which is opposite the edge where data output (TxD) is changed.
+
+The I/O pin can be inverted by writing a '1' to the Inverted I/O Enable bit (INVEN) in the Pin n Control
+register of the port peripheral (PORTx.PINnCTRL). Using the inverted I/O setting for the corresponding
+XCK port pin, the XCK clock edges used for data sampling and data change can be selected. If inverted
+I/O is disabled (INVEN=0), data will be changed at the rising XCK clock edge and sampled at the falling
+XCK clock edge. If inverted I/O is enabled (INVEN=1), data will be changed at the falling XCK clock edge
+and sampled at the rising XCK clock edge.
+Master SPI Mode Clock Generation
+For Master SPI mode operation, only internal clock generation is supported. This is identical to the
+USART Synchronous Master mode, and the baud rate or BAUD setting is calculated using the same
+equations (see Table 23-2).
+There are four combinations of the SPI clock (SCK) phase and polarity with respect to the serial data, and
+these are determined by the Clock Phase bit (UCPHA) in the Control C register (USARTn.CTRLC) and
+the Inverted I/O Enable bit (INVEN) in the Pin n Control register of the port peripheral
+(PORTx.PINnCTRL). The data transfer timing diagrams are shown in Figure 23-4.
+Data bits are shifted out and latched in on opposite edges of the XCK signal, ensuring sufficient time for
+data signals to stabilize. The settings are summarized in the table below. Changing the setting of any of
+these bits during transmission will corrupt both the receiver and transmitter.
+
+Table 23-3. Functionality of INVEN in PORTx.PINnCTRL and UCPHA in USARTn.CTRLC
+SPI Mode INVEN UCPHA Leading Edge Trailing Edge
+0 0 0 Rising, sample Falling, setup
+1 0 1 Rising, setup Falling, sample
+2 1 0 Falling, sample Rising, setup
+3 1 1 Falling, setup Rising, sample
+
+Frame Formats
+Data transfer is frame based, where a serial frame consists of one character of data bits with
+synchronization bits (Start and Stop bits) and an optional parity bit for error checking. This does not apply
+to master SPI operation (see SPI Frame Formats.) The USART accepts all combinations of the following
+as valid frame formats:
+• 1 Start bit
+• 5, 6, 7, 8, or 9 Data bits
+• No, even, or odd Parity bit
+• 1 or 2 Stop bits
+Figure 23-5 illustrates the possible combinations of frame formats. Bits inside brackets are optional.
+
+
+Figure 23-5. Frame Formats
+St Start bit, always low.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 289
+(n) Data bits (0 to 8).
+P Parity bit, may be odd or even.
+Sp Stop bit, always high.
+IDLE No transfer on the communication line (RxD or TxD). The IDLE state is always high.
+Parity
+Even or odd parity can be selected for error checking by writing the Parity Mode bits (PMODE) in the
+Control C register (USARTn.CTRLC). If even parity is selected, the parity bit is set to '1' if the number of
+logical one data bits is odd (making the total number of logical ones even). If odd parity is selected, the
+parity bit is set to '1' if the number of logical one data bits is even (making the total number of ones odd).
+When enabled, the parity checker calculates the parity of the data bits in incoming frames and compares
+the result with the parity bit of the corresponding frame. If a parity error is detected, the parity error flag is
+set.
+SPI Frame Formats
+The serial frame in SPI mode is defined to be one character of eight data bits. The USART in master SPI
+mode has two valid frame formats:
+• 8-bit data, MSb first
+• 8-bit data, LSb first
+The data order is selected by writing to the Data Order bit (UDORD) in the Control C register
+(USARTn.CTRLC).
+After a complete frame is transmitted, a new frame can directly follow it, or the communication line can
+return to the idle (high) state.
+23.3.2.3 Data Transmission - USART Transmitter
+When the transmitter has been enabled, the normal port operation of the TxD pin is overridden by the
+USART and given the function as the transmitter's serial output. The direction of the pin n must be
+configured as output by writing the Direction register for the corresponding port (PORTx.DIR[n]). If the
+USART is configured for one-wire operation, the USART will automatically override the RxD/TxD pin to
+output, when the transmitter is enabled.
+Related Links
+Port Multiplexer (PORTMUX)
+I/O Pin Configuration (PORT)
+Sending Frames
+A data transmission is initiated by loading the Transmit buffer (DATA in USARTn.TXDATA) with the data
+to be sent. The data in the transmit buffer is moved to the Shift register when the Shift register is empty
+and ready to send a new frame. The Shift register is loaded if it is in Idle state (no ongoing transmission)
+or immediately after the last Stop bit of the previous frame is transmitted. When the Shift register is
+loaded with data, it will transfer one complete frame.
+When the entire frame in the Shift register has been shifted out and there is no new data present in the
+transmit buffer, the Transmit Complete Interrupt Flag (TXCIF in USARTn.STATUS) is set and the optional
+interrupt is generated.
+TXDATA can only be written when the Data Register Empty Flag (DREIF in USARTn.STATUS) is set,
+indicating that the register is empty and ready for new data.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 290
+When using frames with fewer than eight bits, the Most Significant bits written to TXDATA are ignored. If
+9-bit characters are used, DATA[8] in USARTn.TXDATAH has to be written before DATA[7:0] in
+USARTn.TXDATAL.
+Disabling the Transmitter
+A disabling of the transmitter will not become effective until ongoing and pending transmissions are
+completed; i.e., when the Transmit Shift register and Transmit Buffer register do not contain data to be
+transmitted. When the transmitter is disabled, it will no longer override the TxDn pin, and the pin direction
+is set as input automatically by hardware, even if it was configured as output by the user.
+23.3.2.4 Data Reception - USART Receiver
+When the receiver is enabled, the RxD pin functions as the receiver's serial input. The direction of the pin
+n must be set as an input in the Direction register of the Port (PORTx.DIR[n]=0), which is the default pin
+setting.
+Receiving Frames
+The receiver starts data reception when it detects a valid Start bit. Each bit that follows the Start bit will be
+sampled at the baud rate or XCK clock, and shifted into the Receive Shift register until the first Stop bit of
+a frame is received. A second Stop bit will be ignored by the receiver. When the first Stop bit is received
+and a complete serial frame is present in the Receive Shift register, the contents of the Shift register will
+be moved into the receive buffer. The receive complete interrupt flag (RXCIF in USARTn.STATUS) is set,
+and the optional interrupt is generated.
+The receiver buffer can be read by reading RXDATA, comprising of DATA[7:0] in USARTn.RXDATAL, and
+DATA[8] in USARTn.RXDATAH. RXDATA should not be read unless the Receive Complete Interrupt Flag
+(RXCIF in USARTn.STATUS) is set. When using frames with fewer than eight bits, the unused Most
+Significant bits are read as zero. If 9-bit characters are used, the ninth bit (DATA[8] in
+USARTn.RXDATAH) must be read before the low byte (DATA[7.0] in USARTn.RXDATAL).
+Receiver Error Flags
+The USART receiver has three error flags in the Receiver Data Register High Byte register
+(USARTn.RXDATAH):
+• Frame Error (FERR)
+• Buffer Overflow (BUFOVF)
+• Parity Error (PERR)
+The error flags are located in the receive FIFO buffer together with their corresponding frame. Due to the
+buffering of the error flags, the USARTn.RXDATAH must be read before the USARTn.RXDATAL, since
+reading the USARTn.RXDATAL changes the FIFO buffer.
+Parity Checker
+When enabled, the parity checker calculates the parity of the data bits in incoming frames and compares
+the result with the parity bit of the corresponding frame. If a parity error is detected, the Parity Error flag
+(PERR in USARTn.RXDATAH) is set.
+If USART LIN mode is enabled (by writing RXMODE to '1' in USARTn.CTRLB), a parity check is only
+performed on the protected identifier field. A parity error is detected if one of the equations below is not
+true which sets PERR in USARTn.RXDATAH.
+P0 = ID0 ⊕ ID1 ⊕ ID2 ⊕ ID4
+P1 = ¬ ID1 ⊕ ID3 ⊕ ID4 ⊕ ID5
+
+Disabling the Receiver
+A disabling of the receiver will be immediate. The receiver buffer will be flushed, and data from ongoing
+receptions will be lost.
+Flushing the Receive Buffer
+If the receive buffer has to be flushed during normal operation, read the DATA location
+(USARTn.RXDATAH and USARTn.RXDATAL registers) until the Receive Complete Interrupt Flag (RXCIF
+in USARTn.RXDATAH) is cleared.
+Asynchronous Data Reception
+The USART includes a clock recovery and a data recovery unit for handling asynchronous data reception.
+The clock recovery unit is used for synchronizing the incoming asynchronous serial frames at the RxD pin
+to the internally generated baud rate clock. It samples and low-pass filters each incoming bit, thereby
+improving the noise immunity of the receiver. The asynchronous reception operational range depends on
+the accuracy of the internal baud rate clock, the rate of the incoming frames, and the frame size in a
+number of bits.
+Asynchronous Clock Recovery
+The clock recovery unit synchronizes the internal clock to the incoming serial frames. Figure 23-7
+illustrates the sampling process for the Start bit of an incoming frame:
+• In Normal mode, the sample rate is 16 times the baud rate.
+• In Double-Speed mode, the sample rate is eight times the baud rate.
+• The horizontal arrows illustrate the synchronization variation due to the sampling process. Note that
+in Double-Speed mode, the variation is larger.
+• Samples denoted as zero are sampled with the RxD line idle (i.e., when there is no communication
+activity).
+Figure 23-7. Start Bit Sampling
+
+When the clock recovery logic detects a high-to-low (i.e., idle-to-start) transition on the RxD line, the Start
+bit detection sequence is initiated. Sample 1 denotes the first zero-sample, as shown in the figure. The
+clock recovery logic then uses three subsequent samples (samples 8, 9, and 10 in Normal mode,
+samples 4, 5, and 6 in Double-Speed mode) to decide if a valid Start bit is received:
+• If two or three samples have a low level, the Start bit is accepted. The clock recovery unit is
+synchronized, and the data recovery can begin.
+• If two or three samples have a high level, the Start bit is rejected as a noise spike, and the receiver
+looks for the next high-to-low transition.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 292
+The process is repeated for each Start bit.
+Asynchronous Data Recovery
+The data recovery unit uses sixteen samples in Normal mode and eight samples in Double-Speed mode
+for each bit. The following figure shows the sampling process of data and parity bits.
+
+As for Start bit detection, an identical majority voting technique is used on the three center samples for
+deciding of the logic level of the received bit. The process is repeated for each bit until a complete frame
+is received. It includes the first Stop bit but excludes additional ones. If the sampled Stop bit is a '0' value,
+the Frame Error (FERR in USARTn.RXDATAH) flag will be set. The next figure shows the sampling of the
+Stop bit in relation to the earliest possible beginning of the next frame's Start bit.
+
+A new high-to-low transition indicating the Start bit of a new frame can come right after the last of the bits
+used for majority voting. For Normal-Speed mode, the first low-level sample can be at the point marked
+(A) in Stop Bit Sampling and Next Start Bit Sampling. For Double-Speed mode, the first low level must be
+delayed to point (B). Point (C) marks a Stop bit of full length at the nominal baud rate. The early Start bit
+detection influences the operational range of the receiver.
+Asynchronous Operational Range
+The operational range of the receiver is dependent on the mismatch between the received bit rate and
+the internally generated baud rate. If an external transmitter is sending using bit rates that are too fast or
+too slow, or if the internally generated baud rate of the receiver does not match the external source’s base
+frequency, the receiver will not be able to synchronize the frames to the Start bit.
+The following equations can be used to calculate the ratio of the incoming data rate and internal receiver
+baud rate.
+RSLOW = 16 D + 1
+16 D + 1 + 6 RFAST = 16 D + 2
+16 D + 1 + 8
+D Sum of character size and parity size (D = 5 to 10 bit).
+Rslow Is the ratio of the slowest incoming data rate that can be accepted in relation to the receiver baud
+rate.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 293
+Rfast Is the ratio of the fastest incoming data rate that can be accepted in relation to the receiver baud
+rate.
+The following tables list the maximum receiver baud rate error that can be tolerated. Normal Speed mode
+has higher toleration of baud rate variations.
+
+Table 23-4. Recommended Maximum Receiver Baud Rate Error for Normal Speed Mode (CLK2X =
+0)
+D #(Data + Parity Bit) Rslow [%] Rfast [%] Maximum Total Error [%] Receiver Max. Receiver
+Error [%]
+5 93.20 106.67 +6.67/-6.80 ±3.0
+6 94.12 105.79 +5.79/-5.88 ±2.5
+7 94.81 105.11 +5.11/-5.19 ±2.0
+8 95.36 104.58 +4.58/-4.54 ±2.0
+9 95.81 104.14 +4.14/-4.19 ±1.5
+10 96.17 103.78 +3.78/-3.83 ±1.5
+Table 23-5. Recommended Maximum Receiver Baud Rate Error for Double Speed Mode (CLK2X =
+1)
+D #(Data + Parity Bit) Rslow [%] Rfast [%] Maximum Total Error [%] Receiver Max. Receiver
+Error [%]
+5 94.12 105.66 +5.66/-5.88 ±2.5
+6 94.92 104.92 +4.92/-5.08 ±2.0
+7 95.52 104.35 +4.35/-4.48 ±1.5
+8 96.00 103.90 +3.90/-4.00 ±1.5
+9 96.39 103.53 +3.53/-3.61 ±1.5
+10 96.70 103.23 +3.23/-3.30 ±1.0
+The recommendations of the maximum receiver baud rate error were made under the assumption that
+the receiver and transmitter equally divide the maximum total error.
+23.3.2.5 USART in Master SPI mode
+Using the USART in Master SPI mode requires the transmitter to be enabled. The receiver can optionally
+be enabled to serve as the serial input. The XCK pin will be used as the transfer clock.
+As for the USART, a data transfer is initiated by writing to the USARTn.DATA register. This is the case for
+both sending and receiving data since the transmitter controls the transfer clock. The data written to
+USARTn.DATA are moved from the transmit buffer to the Shift register when the Shift register is ready to
+send a new frame.
+The transmitter and receiver interrupt flags and corresponding USART interrupts used in Master SPI
+mode are identical in function to their use in normal USART operation. The receiver error status flags are
+not in use and are always read as zero.
+Disabling of the USART transmitter or receiver in Master SPI mode is identical to their disabling in normal
+USART operation.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 294
+Related Links
+CTRLC
+USART SPI vs. SPI
+The USART in Master SPI mode is fully compatible with the stand-alone SPI module in that:
+• Timing diagrams are the same
+• UCPHA bit functionality is identical to that of the SPI CPHA bit
+• UDORD bit functionality is identical to that of the SPI DORD bit
+When the USART is set in Master SPI mode, configuration and use are in some cases different from
+those of the stand-alone SPI module. In addition, the following difference exists:
+• The USART in Master SPI mode does not include the SPI (Write Collision) feature
+The USART in Master SPI mode does not include the SPI Double-Speed mode feature, but this can be
+achieved by configuring the Baud Rate Generator accordingly:
+• Interrupt timing is not compatible
+• Pin control differs due to the master-only operation of the USART in SPI Master mode
+A comparison of the USART in Master SPI mode and the SPI pins is shown in Table 23-6.
+
+Table 23-6. Comparison of USART in Master SPI Mode and SPI Pins
+USART SPI Comment
+TxD MOSI Master out only
+RxD MISO Master in only
+XCK SCK Functionally identical
+- SS Not supported by USART in Master SPI mode
+
+RS-485 Mode of Operation
+The RS-485 feature enables the support of external components to comply with the RS-485 standard.
+Either an external line driver is supported as shown in the figure below (RS-485=0x1 in USARTn.CTRLA),
+or control of the transmitter driving the TxD pin is provided (RS-485=0x2).
+While operating in RS-485 mode, the Transmit Direction pin (XDIR) is driven high when the transmitter is
+active.
+Figure 23-10. RS-485 Bus Connection
+
+The XDIR pin goes high one baud clock cycle in advance of data being shifted out, to allow some guard
+time to enable the external line driver. The XDIR pin will remain high for the complete frame including
+Stop bit(s).
+
+Start Frame Detection
+The start frame detection is supported in UART mode only. The UART start frame detector is limited to
+Standby Sleep mode only and can wake-up the system when a Start bit is detected.
+When a high-to-low transition is detected on RxDn, the oscillator is powered up and the UART clock is
+enabled. After start-up, the rest of the data frame can be received, provided that the baud rate is slow
+enough in relation to the oscillator start-up time. Start-up time of the oscillators varies with supply voltage
+and temperature. For details on oscillator start-up time characteristics, refer to the Electrical
+Characteristics.
+If a false Start bit is detected and if the system has not been woken-up by another source, the clock will
+automatically be turned off and the UART waits for the next transition.
+The UART start frame detection works in Asynchronous mode only. It is enabled by writing the Start
+Frame Detection bit (SFDEN) in USARTn.CTLB. If the Start bit is detected while the device is in Standby
+Sleep mode, the UART Start Interrupt Flag (RXSIF) bit is set.
+In Active, Idle, and Power-Down Sleep modes, the asynchronous detection is automatically disabled.
+The UART receive complete flag and UART start interrupt flag share the same interrupt line, but each has
+its dedicated interrupt settings. Table 21-5 shows the USART start frame detection modes, depending on
+interrupt setting.
+Table 23-7. USART Start Frame Detection Modes
+SFDEN RXSIF Interrupt RXCIF Interrupt Comment
+0 x x Standard mode.
+1 Disabled Disabled Only the oscillator is powered during the frame reception.
+If the interrupts are disabled and buffer overflow is
+ignored, all incoming frames will be lost.
+1 (1) Disabled Enabled System/all clocks are awakened on Receive Complete
+interrupt.
+1 (1) Enabled x System/all clocks are awakened on UART Start Detection.
+
+Note:
+1. The SLEEP instruction will not shut down the oscillator if there is ongoing communication.
+Related Links
+Electrical Characteristics
+23.3.2.8 Break Character Detection and Auto-Baud
+When USART receive mode is set to LINAUTO mode (RXMODE in USARTn.CTRLB), it follows the LIN
+format. All LIN frames start with a break field followed by a sync field. The USART uses a break detection
+threshold of greater than 11 nominal bit times at the configured baud rate. At any time, if more than 11
+consecutive dominant bits are detected on the bus, the USART detects a break field. When a break field
+has been detected, the USART expects the sync field character to be 0x55. This field is used to update
+the actual baud rate in order to stay synchronized. If the received sync character is not 0x55, then the
+Inconsistent Sync Field Error flag (ISFIF in USARTn.STATUS) is set and the baud rate is unchanged.
+
+Note:
+1. The SLEEP instruction will not shut down the oscillator if there is ongoing communication.
+Related Links
+Electrical Characteristics
+23.3.2.8 Break Character Detection and Auto-Baud
+When USART receive mode is set to LINAUTO mode (RXMODE in USARTn.CTRLB), it follows the LIN
+format. All LIN frames start with a break field followed by a sync field. The USART uses a break detection
+threshold of greater than 11 nominal bit times at the configured baud rate. At any time, if more than 11
+consecutive dominant bits are detected on the bus, the USART detects a break field. When a break field
+has been detected, the USART expects the sync field character to be 0x55. This field is used to update
+the actual baud rate in order to stay synchronized. If the received sync character is not 0x55, then the
+Inconsistent Sync Field Error flag (ISFIF in USARTn.STATUS) is set and the baud rate is unchanged.
+Figure 23-12. LIN Break and Sync Fields
+Sync FieldBreak Field
+8 Tbit
+Tbit
+After a break field is detected and the Start bit of the sync field is detected, a counter is started. The
+counter is then incremented for the next eight Tbit of the sync field. At the end of these 8-bit times, the
+counter is stopped. At this moment, the ten Most Significant bits of the counter (value divided by 64) gives
+the new clock divider and the six Least Significant bits of this value (the remainder) gives the new
+fractional part. When the sync field has been received and all bits are found valid, the clock divider and
+the fractional part are updated in the Baud Rate Generator register (USARTn.BAUD). After the break and
+sync fields, n characters of data can be received.
+When the USART receive mode is set to GENAUTO mode, a generic Auto-baud mode is enabled. In this
+mode there are no checks of the sync character to equal 0x55. After detection of a break field, the
+USART expects the next character to be a sync field, counting eight low and high bit times. If the
+measured sync field results in a valid BAUD value (0x0064-0xffff), the BAUD register is updated. Setting
+the Wait for Break bit (WFB in USARTn.STATUS) before receiving the next break character, the next
+negative plus positive edge of RxD line is detected as a break. This makes it possible to set an arbitrary
+new baud rate without knowing the current baud rate.
+23.3.2.9 One-Wire Mode
+In this mode, the TxD pin is connected to the RxD pin internally. If the receiver is enabled when
+transmitting it will receive what the transmitter is sending. This can be used to check that no one else is
+trying to transmit since received data will not be the same as the transmitted data.
+23.3.2.10 Multiprocessor Communication Mode
+The Multiprocessor Communication mode (MCPM) effectively reduces the number of incoming frames
+that have to be handled by the receiver in a system with multiple microcontrollers communicating via the
+same serial bus. This mode is enabled by writing a '1' to the MCPM bit in the Control B register
+(USARTn.CTRLB). In this mode, a dedicated bit in the frames is used to indicate whether the frame is an
+address or data frame type.
+If the receiver is set up to receive frames that contain five to eight data bits, the first Stop bit is used to
+indicate the frame type. If the receiver is set up for frames with nine data bits, the ninth bit is used to
+indicate frame type. When the frame type bit is one, the frame contains an address. When the frame type
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 297
+bit is zero, the frame is a data frame. If 5- to 8-bit character frames are used, the transmitter must be set
+to use two Stop bits, since the first Stop bit is used for indicating the frame type.
+If a particular slave MCU has been addressed, it will receive the following data frames as usual, while the
+other slave MCUs will ignore the frames until another address frame is received.
+Using Multiprocessor Communication Mode
+The following procedure should be used to exchange data in Multiprocessor Communication mode
+(MPCM):
+1. All slave MCUs are in Multiprocessor Communication mode.
+2. The master MCU sends an address frame, and all slaves receive and read this frame.
+3. Each slave MCU determines if it has been selected.
+4. The addressed MCU will disable MPCM and receive all data frames. The other slave MCUs will
+ignore the data frames.
+5. When the addressed MCU has received the last data frame, it must enable MPCM again and wait
+for a new address frame from the master.
+The process then repeats from step 2.
+Using any of the 5- to 8-bit character frame formats is impractical, as the receiver must change between
+using n and n+1 character frame formats. This makes full-duplex operation difficult since the transmitter
+and receiver must use the same character size setting.
+
+Register Summary - USART
+Offset Name Bit Pos.
+0x00 RXDATAL 7:0 DATA[7:0]
+0x01 RXDATAH 7:0 RXCIF BUFOVF FERR PERR DATA[8]
+0x02 TXDATAL 7:0 DATA[7:0]
+0x03 TXDATAH 7:0 DATA[8]
+0x04 STATUS 7:0 RXCIF TXCIF DREIF RXSIF ISFIF BDF WFB
+0x05 CTRLA 7:0 RXCIE TXCIE DREIE RXSIE LBME ABEIE RS-485[1:0]
+0x06 CTRLB 7:0 RXEN TXEN SFDEN ODME RXMODE[1:0] MPCM
+0x07 CTRLC 7:0 CMODE[1:0] PMODE[1:0] SBMODE CHSIZE[2:0]
+0x07 CTRLC 7:0 CMODE[1:0] UDORD UCPHA
+0x08 BAUD 7:0 BAUD[7:0]
+15:8 BAUD[15:8]
+0x0A Reserved
+0x0B DBGCTRL 7:0 DBGRUN
+0x0C EVCTRL 7:0 IREI
+0x0D TXPLCTRL 7:0 TXPL[7:0]
+0x0E RXPLCTRL 7:0 RXPL[6:0]
+
+23.5.8 Control C - Async Mode
+Name: CTRLC
+Offset: 0x07
+Reset: 0x03
+Property: -
+This register description is valid for all modes except Master SPI mode. When the USART
+Communication mode bits (CMODE) in this register are written to 'MSPI', see Control C - Master SPI
+Mode for the correct description.
+Bit 7 6 5 4 3 2 1 0
+CMODE[1:0] PMODE[1:0] SBMODE CHSIZE[2:0]
+Access R/W R/W R/W R/W R/W R/W R/W R/W
+Reset 0 0 0 0 0 0 1 1
+Bits 7:6 – CMODE[1:0] USART Communication Mode
+Writing these bits select the Communication mode of the USART.
+Writing a 0x3 to these bits alters the available bit fields in this register, see Control C - Master SPI Mode.
+Value Name Description
+0x0 ASYNCHRONOUS Asynchronous USART
+0x1 SYNCHRONOUS Synchronous USART
+0x2 IRCOM Infrared Communication
+0x3 MSPI Master SPI
+Bits 5:4 – PMODE[1:0] Parity Mode
+Writing these bits enable and select the type of parity generation.
+When enabled, the transmitter will automatically generate and send the parity of the transmitted data bits
+within each frame. The receiver will generate a parity value for the incoming data, compare it to the
+PMODE setting, and set the Parity Error flag (PERR) in the STATUS register (USARTn.STATUS) if a
+mismatch is detected.
+Value Name Description
+0x0 DISABLED Disabled
+0x1 - Reserved
+0x2 EVEN Enabled, Even Parity
+0x3 ODD Enabled, Odd Parity
+Bit 3 – SBMODE Stop Bit Mode
+Writing this bit selects the number of Stop bits to be inserted by the transmitter.
+The receiver ignores this setting.
+Value Description
+0 1 Stop bit
+1 2 Stop bits
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 312
+Bits 2:0 – CHSIZE[2:0] Character Size
+Writing these bits select the number of data bits in a frame. The receiver and transmitter use the same
+setting. For 9BIT character size, the order of which byte to read or write first, low or high byte of RXDATA
+or TXDATA is selectable.
+Value Name Description
+0x0 5BIT 5-bit
+0x1 6BIT 6-bit
+0x2 7BIT 7-bit
+0x3 8BIT 8-bit
+0x4 - Reserved
+0x5 - Reserved
+0x6 9BITL 9-bit (Low byte first)
+0x7 9BITH 9-bit (High byte first)
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 313
+23.5.9 Control C - Master SPI Mode
+Name: CTRLC
+Offset: 0x07
+Reset: 0x00
+Property: -
+This register description is valid only when the USART is in Master SPI mode (CMODE written to MSPI).
+For other CMODE values, see Control C - Async Mode.
+See USART in Master SPI mode for a full description of the Master SPI mode operation.
+Bit 7 6 5 4 3 2 1 0
+CMODE[1:0] UDORD UCPHA
+Access R/W R/W R/W R/W
+Reset 0 0 0 0
+Bits 7:6 – CMODE[1:0] USART Communication Mode
+Writing these bits select the communication mode of the USART.
+Writing a value different than 0x3 to these bits alters the available bit fields in this register, see Control C -
+Async Mode.
+Value Name Description
+0x0 ASYNCHRONOUS Asynchronous USART
+0x1 SYNCHRONOUS Synchronous USART
+0x2 IRCOM Infrared Communication
+0x3 MSPI Master SPI
+Bit 2 – UDORD Data Order
+Writing this bit selects the frame format.
+The receiver and transmitter use the same setting. Changing the setting of UDORD will corrupt all
+ongoing communication for both the receiver and the transmitter.
+Value Description
+0 MSB of the data word is transmitted first
+1 LSB of the data word is transmitted first
+Bit 1 – UCPHA Clock Phase
+The UCPHA bit setting determines if data is sampled on the leading (first) edge or tailing (last) edge of
+XCKn. Refer to the Master SPI Mode Clock Generation for details.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 314
+23.5.10 Baud Register
+Name: BAUD
+Offset: 0x08
+Reset: 0x00
+Property: -
+The USARTn.BAUDL and USARTn.BAUDH register pair represents the 16-bit value, USARTn.BAUD.
+The low byte [7:0] (suffix L) is accessible at the original offset. The high byte [15:8] (suffix H) can be
+accessed at offset + 0x01.
+Ongoing transmissions of the transmitter and receiver will be corrupted if the baud rate is changed.
+Writing this register will trigger an immediate update of the baud rate prescaler. For more information on
+how to set the baud rate, see Table 23-2.
+Bit 15 14 13 12 11 10 9 8
+BAUD[15:8]
+Access R/W R/W R/W R/W R/W R/W R/W R/W
+Reset 0 0 0 0 0 0 0 0
+Bit 7 6 5 4 3 2 1 0
+BAUD[7:0]
+Access R/W R/W R/W R/W R/W R/W R/W R/W
+Reset 0 0 0 0 0 0 0 0
+Bits 15:8 – BAUD[15:8] USART Baud Rate High Byte
+These bits hold the MSB of the 16-bit Baud register.
+Bits 7:0 – BAUD[7:0] USART Baud Rate Low Byte
+These bits hold the LSB of the 16-bit Baud register.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 315
+23.5.11 Debug Control Register
+Name: DBGCTRL
+Offset: 0x0B
+Reset: 0x00
+Property: -
+Bit 7 6 5 4 3 2 1 0
+DBGRUN
+Access R/W
+Reset 0
+Bit 0 – DBGRUN Debug Run
+Value Description
+0 The peripheral is halted in Break Debug mode and ignores events.
+1 The peripheral will continue to run in Break Debug mode when the CPU is halted.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 316
+23.5.12 IrDA Control Register
+Name: EVCTRL
+Offset: 0x0C
+Reset: 0x00
+Property: -
+Bit 7 6 5 4 3 2 1 0
+IREI
+Access R/W
+Reset 0
+Bit 0 – IREI IrDA Event Input Enable
+This bit enables the event source for the IRCOM Receiver. If event input is selected for the IRCOM
+Receiver, the input from the USART’s RX pin is automatically disabled.
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 317
+23.5.13 IRCOM Transmitter Pulse Length Control Register
+Name: TXPLCTRL
+Offset: 0x0D
+Reset: 0x00
+Property: -
+Bit 7 6 5 4 3 2 1 0
+TXPL[7:0]
+Access R/W R/W R/W R/W R/W R/W R/W R/W
+Reset 0 0 0 0 0 0 0 0
+Bits 7:0 – TXPL[7:0] Transmitter Pulse Length
+The 8-bit value sets the pulse modulation scheme for the transmitter. Setting this register will have effect
+only if IRCOM mode is selected by a USART. By leaving this register value to zero, 3/16 of the baud rate
+period pulse modulation is used. Setting this value from 1 to 254 will give a fixed pulse length coding. The
+8-bit value sets the number of system clock periods for the pulse. The start of the pulse will be
+synchronized with the rising edge of the baud rate clock. Setting the value to 255 (0xFF) will disable pulse
+coding, letting the RX and TX signals pass through the IRCOM module unaltered. This enables other
+features through the IRCOM module, such as half duplex USART, Loop-back testing, and USART RX
+input from an event channel.
+TXPL must be configured before the USART transmitter is enabled (TXEN).
+ATtiny202/402
+Universal Synchronous and Asynchronous Recei...
+© 2018 Microchip Technology Inc. Datasheet Preliminary DS40001969A-page 318
+23.5.14 IRCOM Receiver Pulse Length Control Register
+Name: RXPLCTRL
+Offset: 0x0E
+Reset: 0x00
+Property: -
+Bit 7 6 5 4 3 2 1 0
+RXPL[6:0]
+Access R/W R/W R/W R/W R/W R/W R/W
+Reset 0 0 0 0 0 0 0
+Bits 6:0 – RXPL[6:0] Receiver Pulse Length
+The 8-bit value sets the filter coefficient for the IRCOM transceiver. Setting this register will only have
+effect if IRCOM mode is selected by a USART.
+By leaving this register value to zero, filtering is disabled. Setting this value between 0x01 and 0xFF will
+enable filtering, where x+1 equal samples are required for the pulse to be accepted.
+RXPL must be configured before USART receiver is enabled (RXEN).

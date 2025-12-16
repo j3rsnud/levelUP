@@ -5,6 +5,7 @@
 
 #include "level_logic.h"
 #include "fdc1004.h"
+#include "log_updi_tx.h"
 
 // Module state
 struct LevelState {
@@ -127,6 +128,9 @@ WaterLevel level_update() {
         c2_cal -= state.calibration.base_c2_ff;
         c3_cal -= state.calibration.base_c3_ff;
     }
+
+    // Log drift-corrected values
+    log_drift_corrected(c1_cal, c2_cal, c3_cal);
 
     // Determine new level with hysteresis
     WaterLevel new_level = determine_level(c1_cal, c2_cal, c3_cal);
