@@ -1,6 +1,6 @@
 /**
  * @file log_updi_tx.cpp
- * @brief Hardware USART0 TX on PA2 (one-wire / shared RxD), TX-only (RX disabled)
+ * @brief Bit-banged software UART TX on PA2 (LED pin) for debug logging
  */
 
 #include "log_updi_tx.h"
@@ -8,70 +8,69 @@
 #if LOG_ENABLED
 
 #include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay_basic.h>
 #include "pins.hpp"
 
 // -------------------------
-// Config
+// Bit-banged UART config
 // -------------------------
-// F_CPU is defined by platformio.ini (8MHz: 16MHz osc / 2 prescaler)
 #ifndef F_CPU
-#define F_CPU 8000000UL
+#error "F_CPU not defined"
 #endif
-#define BAUD_RATE  9600UL
-#define SAMPLES    16UL  // NORMAL mode (16x oversampling)
 
-// BAUD_REG = (64 * F_CPU + (SAMPLES*BAUD_RATE)/2) / (SAMPLES * BAUD_RATE)
-#define BAUD_REG   ((uint16_t)((64UL * F_CPU + (SAMPLES * BAUD_RATE) / 2) / (SAMPLES * BAUD_RATE)))
+// Timing calibration for bit-banged UART
+// At 3.333 MHz, 9600 baud = 347.2 cycles/bit
+// Account for ~10 cycles overhead → 337 cycles → 84 loops
+#ifndef BIT_DELAY_LOOPS
+#define BIT_DELAY_LOOPS 84
+#endif
 
 // -------------------------
-// Low-level USART helpers
+// Low-level bit-banged UART
 // -------------------------
-static inline void usart0_init_onewire_tx_on_pa2()
-{
-    // Select alternate USART0 pins: PA2 is RxD (alternate). PORTMUX.CTRLB bit0 = 1 for alternate location.
-    PORTMUX.CTRLB |= (1 << 0); // USART0 = 1 (alternate location - PA2 is RxD)
-
-    // One-wire mode uses RxD pin for TX/RX
-    // Step 1: Set RxD pin high (idle state)
-    PORTA.OUTSET = pins::LED;
-
-    // Step 2: Set RxD pin as output
-    PORTA.DIRSET = pins::LED;
-
-    // Disable RX/TX before reconfig (clean slate)
-    USART0.CTRLB &= ~(USART_RXEN_bm | USART_TXEN_bm);
-
-    // Set baud rate (USARTn.BAUD is 16-bit)
-    USART0.BAUD = BAUD_REG;
-
-    // 8N1 async: CMODE=async, PMODE=disabled, SBMODE=1 stop, CHSIZE=8-bit
-    USART0.CTRLC = USART_CMODE_ASYNCHRONOUS_gc
-                 | USART_PMODE_DISABLED_gc
-                 | USART_SBMODE_1BIT_gc
-                 | USART_CHSIZE_8BIT_gc;
-
-    // One-wire mode: Enable internal TxD→RxD connection (datasheet 23.3.2.9)
-    // This allows transmitter to drive the RxD pin (PA2)
-    USART0.CTRLA |= USART_LBME_bm;
-
-    // Enable TX (RX disabled for TX-only operation)
-    USART0.CTRLB |= USART_TXEN_bm;
-
-    // In one-wire operation, transmitter/receiver share RxD and TxD is internally connected to RxD.
-    // Datasheet also notes that for one-wire, the RxD/TxD pin can be overridden to output when TX is enabled.
+static inline void tx_high() {
+    VPORTA.OUT |= pins::LED;
 }
 
-static inline void usart0_write(uint8_t b)
-{
-    // TXDATA can only be written when DREIF is set
-    while ((USART0.STATUS & USART_DREIF_bm) == 0) { }
-    USART0.TXDATAL = b;  // TXDATAL is the TX data low byte
+static inline void tx_low() {
+    VPORTA.OUT &= (uint8_t)~pins::LED;
 }
 
-static inline void uart_tx_string(const char* str)
-{
+static inline void delay_1bit() {
+    _delay_loop_2(BIT_DELAY_LOOPS);
+}
+
+static inline void uart_tx_byte(uint8_t b) {
+    uint8_t s = SREG;
+    cli();
+
+    // Start bit
+    tx_low();
+    delay_1bit();
+
+    // Data bits (LSB first)
+    for (uint8_t i = 0; i < 8; i++) {
+        if (b & 0x01)
+            tx_high();
+        else
+            tx_low();
+        delay_1bit();
+        b >>= 1;
+    }
+
+    // Stop bit
+    tx_high();
+    delay_1bit();
+
+    SREG = s;
+}
+
+static inline void uart_tx_string(const char* str) {
     while (*str) {
-        usart0_write((uint8_t)*str++);
+        if (*str == '\n')
+            uart_tx_byte('\r');
+        uart_tx_byte((uint8_t)*str++);
     }
 }
 
@@ -136,7 +135,11 @@ static char* uint_to_str(uint16_t value, char* buffer)
 // -------------------------
 void log_init()
 {
-    usart0_init_onewire_tx_on_pa2();
+    // Set PA2 as output
+    PORTA.DIRSET = pins::LED;
+
+    // Idle HIGH (UART idle state)
+    VPORTA.OUT |= pins::LED;
 }
 
 void log_hello()
@@ -150,35 +153,37 @@ void log_sensor_data(int16_t c1_ff, int16_t c2_ff, int16_t c3_ff, int16_t c4_ff,
 
     uart_tx_string("t=");
     uart_tx_string(uint_to_str(timestamp_sec, temp));
-    usart0_write(' ');
+    uart_tx_byte(' ');
 
     uart_tx_string("c1=");
     uart_tx_string(int_to_str(c1_ff, temp));
-    usart0_write(' ');
+    uart_tx_byte(' ');
 
     uart_tx_string("c2=");
     uart_tx_string(int_to_str(c2_ff, temp));
-    usart0_write(' ');
+    uart_tx_byte(' ');
 
     uart_tx_string("c3=");
     uart_tx_string(int_to_str(c3_ff, temp));
-    usart0_write(' ');
+    uart_tx_byte(' ');
 
     uart_tx_string("c4=");
     uart_tx_string(int_to_str(c4_ff, temp));
-    usart0_write('\n');
+    uart_tx_byte('\n');
 }
 
 void log_drift_corrected(int16_t dc1c, int16_t dc2c, int16_t dc3c)
 {
     char temp[8];
 
+    // Format: "dC: dc1=-50 dc2=-100 dc3=-200" to match ESP32 bridge parser
+    uart_tx_string("dC: dc1=");
     uart_tx_string(int_to_str(dc1c, temp));
-    usart0_write(',');
+    uart_tx_string(" dc2=");
     uart_tx_string(int_to_str(dc2c, temp));
-    usart0_write(',');
+    uart_tx_string(" dc3=");
     uart_tx_string(int_to_str(dc3c, temp));
-    usart0_write('\n');
+    uart_tx_byte('\n');
 }
 
 void log_debug(const char* msg)

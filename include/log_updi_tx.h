@@ -1,20 +1,20 @@
 /**
  * @file log_updi_tx.h
- * @brief Hardware USART0 one-wire TX on PA2 (LED pin) for debug logging
+ * @brief Bit-banged software UART TX on PA2 (LED pin) for debug logging
  *
- * Allows logging FDC1004 sensor data over the PA2 pin using hardware USART0.
- * TX-only mode (RX disabled) using one-wire configuration.
+ * Allows logging FDC1004 sensor data over the PA2 pin using software bit-banging.
+ * TX-only, works reliably at 9600 baud with 3.333 MHz clock.
  * Use with a separate bridge board (ESP Feather V2).
  *
  * Hardware setup:
- * - PA2 (LED pin / USART0 TX) → ESP UART RX
+ * - PA2 (LED pin) → ESP GPIO 7 (UART RX)
  * - VDD → ESP 3V3
  * - GND → ESP GND
  *
  * Configuration:
- * - Baud rate: 9600 (16x oversampling)
+ * - Baud rate: 9600
  * - Frame: 8N1 (8 data bits, no parity, 1 stop bit)
- * - One-wire mode: TxD/RxD share PA2 (default PORTMUX location)
+ * - Bit-banged using _delay_loop_2()
  *
  * Note: LED must be disconnected to use PA2 for UART TX
  */
